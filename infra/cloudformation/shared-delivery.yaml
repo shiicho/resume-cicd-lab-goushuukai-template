@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Shared delivery resources for static artifacts and the web container image."
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: "Project slug used in resource names."
+  ResourceProjectName:
+    Type: String
+    Description: "Short project name used in AWS resource names."
+  ResourceIdentifier:
+    Type: String
+    Description: "Repo or workload identifier appended to AWS resource names."
+  TaggedImageCount:
+    Type: Number
+    Description: "How many tagged images to retain in ECR."
+    Default: 20
+  ScanOnPush:
+    Type: String
+    Description: "Enable image scanning on push."
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"
+  ImageTagMutability:
+    Type: String
+    Description: "ECR tag mutability mode."
+    AllowedValues:
+      - MUTABLE
+      - IMMUTABLE
+    Default: IMMUTABLE
+
+Conditions:
+  ScanImagesOnPush: !Equals [!Ref ScanOnPush, "true"]
+
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${ResourceProjectName}-shared-s3-artifact-${ResourceIdentifier}-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Name
+          Value: !Sub "${ResourceProjectName}-shared-s3-artifact-${ResourceIdentifier}-${AWS::AccountId}"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: shared
+        - Key: ManagedBy
+          Value: cloudformation
+        - Key: Service
+          Value: delivery
+
+  WebRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub "${ResourceProjectName}-shared-ecr-web-${ResourceIdentifier}"
+      ImageTagMutability: !Ref ImageTagMutability
+      ImageScanningConfiguration:
+        ScanOnPush: !If [ScanImagesOnPush, true, false]
+      LifecyclePolicy:
+        LifecyclePolicyText: !Sub |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Retain the most recent tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["web-v", "sha-"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": ${TaggedImageCount}
+                },
+                "action": {
+                  "type": "expire"
+                }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Expire all untagged images",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 1
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub "${ResourceProjectName}-shared-ecr-web-${ResourceIdentifier}"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: shared
+        - Key: ManagedBy
+          Value: cloudformation
+        - Key: Service
+          Value: delivery
+
+Outputs:
+  ArtifactBucketName:
+    Description: "S3 bucket used for built static site artifacts."
+    Value: !Ref ArtifactBucket
+  EcrRepositoryArn:
+    Description: "ECR repository ARN for the web image."
+    Value: !GetAtt WebRepository.Arn
+  EcrRepositoryName:
+    Description: "ECR repository name for the web image."
+    Value: !Ref WebRepository
+  EcrRepositoryUri:
+    Description: "ECR repository URI for the web image."
+    Value: !GetAtt WebRepository.RepositoryUri

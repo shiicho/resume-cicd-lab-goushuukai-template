@@ -1,0 +1,159 @@
+# Japanese catalog for resume-cicd-lab wizards.
+# Voice rules (see memory/project-resume-cicd-lab-wizard-i18n-design.md):
+#   - です／ます register, not keigo / not plain form
+#   - no あなた; address the action
+#   - katakana tech terms (デプロイ, コミット, スタック, パス)
+#   - half-width space between CJK and Latin
+#   - declarative, tight; no 〜ね / 〜よ / 〜と思います
+msgid ""
+msgstr ""
+"Project-Id-Version: setup_repo 0.1\n"
+"POT-Creation-Date: 2026-04-22 12:00+0000\n"
+"PO-Revision-Date: 2026-04-22 12:00+0000\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+# ----------------------------------------------------------------------
+# First-run locale picker
+# ----------------------------------------------------------------------
+
+msgid "UI language"
+msgstr "UI 言語"
+
+msgid "Auto (detected: {locale})"
+msgstr "自動 (検出: {locale})"
+
+msgid "Commands and flags stay English in every locale."
+msgstr "コマンドとフラグはどの言語でも英語のままです。"
+
+msgid "Change anytime: ./scripts/setup_repo.py configure --locale <lang>"
+msgstr "変更はいつでも: ./scripts/setup_repo.py configure --locale <lang>"
+
+# ----------------------------------------------------------------------
+# validate-tools
+# ----------------------------------------------------------------------
+
+msgid "Tool status"
+msgstr "ツール状態"
+
+msgid "Tool"
+msgstr "ツール"
+
+msgid "Available"
+msgstr "利用可能"
+
+msgid "Version"
+msgstr "バージョン"
+
+msgid "Authenticated"
+msgstr "認証済み"
+
+msgid "Toolchain ready"
+msgstr "ツールチェーン整いました"
+
+msgid "Next: Lab {n} — {title}"
+msgstr "次は Lab {n} — {title}"
+
+msgid "First command:"
+msgstr "最初のコマンド:"
+
+msgid "{tool} not on your PATH"
+msgstr "{tool} が PATH にありません"
+
+msgid "{tool} {v} is below the minimum {floor}"
+msgstr "{tool} {v} は最低バージョン {floor} を下回っています"
+
+# ----------------------------------------------------------------------
+# apply flow
+# ----------------------------------------------------------------------
+
+msgid "Grab a coffee — we'll tell you when it's done."
+msgstr "コーヒーでも淹れてお待ちください — 完了したらお知らせします。"
+
+msgid "Estimated wait"
+msgstr "待機時間の目安"
+
+msgid "Your first AWS infrastructure is alive"
+msgstr "初めての AWS インフラが稼働しています"
+
+msgid "Running stacks ({n}):"
+msgstr "稼働中のスタック ({n}):"
+
+msgid "Daily cost: ${x}"
+msgstr "日次コスト: ${x}"
+
+# ----------------------------------------------------------------------
+# typed-scope destroy
+# ----------------------------------------------------------------------
+
+msgid "This is destructive. Type the exact scope below to confirm:"
+msgstr "これは破壊的な操作です。以下のスコープを一字ずつ入力して確認してください:"
+
+msgid "Scope confirmed — proceeding."
+msgstr "スコープを確認しました — 進めます。"
+
+# ----------------------------------------------------------------------
+# destroy success
+# ----------------------------------------------------------------------
+
+msgid "Environment peacefully gone"
+msgstr "環境を安全に削除しました"
+
+msgid "Removed: {n} stacks · {o} S3 objects · {i} ECR images"
+msgstr "削除済み: {n} スタック · {o} S3 オブジェクト · {i} ECR イメージ"
+
+msgid "Cost stopped: ${x}/day"
+msgstr "停止したコスト: ${x}/day"
+
+msgid "To come back later:"
+msgstr "後で戻ってくるには:"
+
+# ----------------------------------------------------------------------
+# claim + promotion
+# ----------------------------------------------------------------------
+
+msgid "Lab {n} claim PR opened"
+msgstr "Lab {n} の claim PR を開きました"
+
+msgid "Auto-merge when CI is green:"
+msgstr "CI が緑になったら自動マージ:"
+
+msgid "{env} promotion ready"
+msgstr "{env} 昇格準備完了"
+
+# ----------------------------------------------------------------------
+# common errors
+# ----------------------------------------------------------------------
+
+msgid "Not inside a git repository."
+msgstr "git リポジトリ内で実行してください。"
+
+# ----------------------------------------------------------------------
+# Questionary constants (monkey-patched in wizard.i18n)
+# ----------------------------------------------------------------------
+
+msgid "Yes"
+msgstr "はい"
+
+msgid "No"
+msgstr "いいえ"
+
+msgid "(Y/n)"
+msgstr "(Y/n)"
+
+msgid "(y/N)"
+msgstr "(y/N)"
+
+msgid "Cancelled by user."
+msgstr "キャンセルされました。"
+
+msgid "Invalid input"
+msgstr "無効な入力です"
+
+msgid "(Use arrow keys)"
+msgstr "(矢印キーで選択)"
+
+msgid "(Use arrow keys + space to select)"
+msgstr "(矢印キー + スペースで選択)"

@@ -1,0 +1,198 @@
+name: Build Release Assets
+
+on:
+  push:
+    tags:
+      - web-v*
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional version label for a manual build
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
+  actions: write  # required for dispatch-ci-on-promotion-pr below
+
+jobs:
+  build-release-assets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Derive release metadata
+        id: meta
+        shell: bash
+        run: |
+          short_sha="${GITHUB_SHA::12}"
+          image_repo="$(python3 scripts/release_state.py show --kind delivery --field ecrRepositoryUri)"
+          artifact_bucket="$(python3 scripts/release_state.py show --kind delivery --field artifactBucket)"
+
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#web-v}"
+            release_tag="${GITHUB_REF_NAME}"
+            promote_to_development="true"
+          else
+            version="${{ inputs.version }}"
+            if [[ -z "${version}" ]]; then
+              version="0.0.0-dev"
+            fi
+            release_tag="manual-${short_sha}"
+            promote_to_development="false"
+          fi
+
+          artifact_key="web/releases/${release_tag}+${short_sha}/site.zip"
+
+          {
+            echo "short_sha=${short_sha}"
+            echo "version=${version}"
+            echo "image_repo=${image_repo}"
+            echo "release_tag=${release_tag}"
+            echo "artifact_bucket=${artifact_bucket}"
+            echo "artifact_key=${artifact_key}"
+            echo "promote_to_development=${promote_to_development}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Package static site
+        run: |
+          npm ci --prefix app
+          npm run build --prefix app
+          cd app/dist
+          zip -qr /tmp/site.zip .
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Upload static artifact to S3
+        run: |
+          # Idempotent: aws s3 cp overwrites by default, so re-runs on the
+          # same tag succeed. Bucket has no object-lock so there's no
+          # "cannot overwrite" failure mode on retry.
+          aws s3 cp /tmp/site.zip "s3://${{ steps.meta.outputs.artifact_bucket }}/${{ steps.meta.outputs.artifact_key }}"
+
+      - name: Check if ECR image tag already exists
+        id: image_check
+        shell: bash
+        run: |
+          # ECR repo has tag immutability enabled. A naive re-run of the
+          # build-and-push step fails with "tag already exists ... cannot
+          # be overwritten". This pre-check detects a prior successful
+          # push for the same release tag so the workflow can skip the
+          # rebuild and proceed to the downstream release-state update +
+          # promotion PR steps. Makes release-assets.yml safe to re-run
+          # after any partial failure.
+          repo_name="$(basename "${{ steps.meta.outputs.image_repo }}")"
+          if existing=$(aws ecr describe-images --region "${{ vars.AWS_REGION }}" --repository-name "${repo_name}" --image-ids imageTag="${{ steps.meta.outputs.release_tag }}" --query 'imageDetails[0].imageDigest' --output text 2>/dev/null); then
+            if [[ -n "${existing}" && "${existing}" != "None" ]]; then
+              echo "::notice::ECR tag ${{ steps.meta.outputs.release_tag }} already present with digest ${existing} — skipping rebuild."
+              echo "existing_digest=${existing}" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+          fi
+          echo "existing_digest=" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        if: steps.image_check.outputs.existing_digest == ''
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Amazon ECR
+        if: steps.image_check.outputs.existing_digest == ''
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push container image
+        id: build_fresh
+        if: steps.image_check.outputs.existing_digest == ''
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.release_tag }}
+            ${{ steps.meta.outputs.image_repo }}:sha-${{ steps.meta.outputs.short_sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+
+      - name: Resolve image digest for downstream steps
+        id: build
+        shell: bash
+        run: |
+          # Unifies the two branches so downstream steps reference
+          # steps.build.outputs.digest regardless of whether we rebuilt or
+          # reused the existing tag.
+          if [[ -n "${{ steps.image_check.outputs.existing_digest }}" ]]; then
+            echo "digest=${{ steps.image_check.outputs.existing_digest }}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "digest=${{ steps.build_fresh.outputs.digest }}" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Update development release state
+        if: steps.meta.outputs.promote_to_development == 'true'
+        run: |
+          python3 scripts/release_state.py update \
+            --env development \
+            --version "${{ steps.meta.outputs.version }}" \
+            --git-sha "${{ steps.meta.outputs.short_sha }}" \
+            --image-repo "${{ steps.meta.outputs.image_repo }}" \
+            --image-digest "${{ steps.build.outputs.digest }}" \
+            --artifact-bucket "${{ steps.meta.outputs.artifact_bucket }}" \
+            --artifact-key "${{ steps.meta.outputs.artifact_key }}"
+
+      - name: Create development promotion PR
+        id: promotion-pr
+        if: steps.meta.outputs.promote_to_development == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ github.token }}
+          base: main
+          branch: chore/promote-web-v${{ steps.meta.outputs.version }}-development
+          delete-branch: true
+          commit-message: "chore(development): promote web v${{ steps.meta.outputs.version }}"
+          title: "chore(development): promote web v${{ steps.meta.outputs.version }}"
+          body: |
+            Promote one immutable web release into `development`.
+
+            Static target:
+            - Artifact: `s3://${{ steps.meta.outputs.artifact_bucket }}/${{ steps.meta.outputs.artifact_key }}`
+
+            ECS target:
+            - Image: `${{ steps.meta.outputs.image_repo }}@${{ steps.build.outputs.digest }}`
+
+            Release:
+            - Version: `${{ steps.meta.outputs.version }}`
+            - Commit: `${{ steps.meta.outputs.short_sha }}`
+
+      # Same bot-loop rescue as dispatch-ci-on-release-pr in release-please.yml.
+      # peter-evans/create-pull-request@v6 opens the PR via GITHUB_TOKEN, which
+      # GitHub treats as a bot action — so `ci.yml`'s pull_request trigger
+      # doesn't fire, branch protection's required `summary` check never lands,
+      # and students see the promotion PR frozen on "Some checks haven't
+      # completed yet." Explicitly dispatching ci.yml on the promotion branch
+      # produces commit-level check-runs. Students may still need to close+
+      # reopen the PR once to tie CI runs to the PR's rollup (Lab 7 documents
+      # that dance).
+      - name: Dispatch Validate on the promotion PR branch
+        if: steps.meta.outputs.promote_to_development == 'true' && steps.promotion-pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          branch="chore/promote-web-v${{ steps.meta.outputs.version }}-development"
+          echo "Promotion PR #${{ steps.promotion-pr.outputs.pull-request-number }} opened on ${branch}; dispatching ci.yml"
+          gh workflow run ci.yml \
+            --repo "${GH_REPO}" \
+            --ref "${branch}"

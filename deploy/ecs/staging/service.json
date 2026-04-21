@@ -1,0 +1,7 @@
+{
+  "environment": "staging",
+  "cluster": "resume-stg-ecs-cluster-cicd-lab",
+  "service": "resume-stg-ecs-service-cicd-lab",
+  "waitForSteadyState": true,
+  "cloudFormationStack": "resume-cicd-lab-stg-ecs-app"
+}

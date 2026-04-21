@@ -1,0 +1,55 @@
+{
+  "family": "resume-prd-ecs-task-cicd-lab",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::123456789012:role/resume-prd-iam-ecs-task-exec-cicd-lab",
+  "taskRoleArn": "arn:aws:iam::123456789012:role/resume-prd-iam-ecs-task-app-cicd-lab",
+  "containerDefinitions": [
+    {
+      "name": "web",
+      "image": "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/resume-shared-ecr-web-cicd-lab@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "hostPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "APP_ENV",
+          "value": "production"
+        },
+        {
+          "name": "APP_VERSION",
+          "value": "0.1.0"
+        },
+        {
+          "name": "APP_HOSTNAME",
+          "value": "replace-with-production-service-host"
+        },
+        {
+          "name": "APP_BASE_URL",
+          "value": "http://replace-with-production-service-host"
+        },
+        {
+          "name": "APP_COMMIT_SHA",
+          "value": "bootstrap"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/aws/ecs/resume-prd-logs-web-cicd-lab",
+          "awslogs-region": "ap-northeast-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

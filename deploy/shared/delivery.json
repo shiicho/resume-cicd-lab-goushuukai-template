@@ -1,0 +1,6 @@
+{
+  "artifactBucket": "resume-shared-s3-artifact-cicd-lab-123456789012",
+  "ecrRepositoryName": "resume-shared-ecr-web-cicd-lab",
+  "ecrRepositoryUri": "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/resume-shared-ecr-web-cicd-lab",
+  "cloudFormationStack": "resume-cicd-lab-shared-delivery"
+}

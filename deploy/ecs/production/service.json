@@ -1,0 +1,7 @@
+{
+  "environment": "production",
+  "cluster": "resume-prd-ecs-cluster-cicd-lab",
+  "service": "resume-prd-ecs-service-cicd-lab",
+  "waitForSteadyState": true,
+  "cloudFormationStack": "resume-cicd-lab-prd-ecs-app"
+}

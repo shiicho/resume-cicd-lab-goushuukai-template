@@ -1,0 +1,115 @@
+name: Deploy Static Site
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "deploy/static/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-static:
+    runs-on: ubuntu-latest
+    # Skip when AWS vars aren't seeded yet. On a fresh Classroom fork the
+    # `deploy/static/**` paths ship with the template, so the initial push
+    # matches the path filter. `setup_repo.py` only writes `AWS_REGION` +
+    # role ARNs during Lab 3. Without this guard, configure-aws-credentials
+    # fails with "Input required and not supplied: aws-region" and the
+    # student sees a red X before even opening Lab 0.
+    if: vars.AWS_REGION != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_STATIC_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Determine target environments
+        id: targets
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "environments=${{ inputs.environment }}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
+          if [[ -z "${before}" || "${before}" == "0000000000000000000000000000000000000000" ]]; then
+            before="$(git rev-parse "${after}^" 2>/dev/null || true)"
+          fi
+
+          if [[ -z "${before}" ]]; then
+            envs="$(find deploy/static -name site.json | awk -F/ '{print $3}' | sort -u | paste -sd',' -)"
+          else
+            envs="$(git diff --name-only "${before}" "${after}" -- deploy/static | awk -F/ '/deploy\/static\/[^/]+\/site\.json/ {print $3}' | sort -u | paste -sd',' -)"
+          fi
+          echo "environments=${envs}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy changed environments
+        if: steps.targets.outputs.environments != ''
+        shell: bash
+        run: |
+          IFS=',' read -ra envs <<< "${{ steps.targets.outputs.environments }}"
+          for env in "${envs[@]}"; do
+            git_sha="$(python3 scripts/release_state.py show --kind static --env "${env}" --field release.gitSha)"
+            if [[ "${git_sha}" == "bootstrap" ]]; then
+              echo "::notice::${env}: release.gitSha is 'bootstrap' — no real release yet (first deploy lands in Lab 7). Skipping."
+              continue
+            fi
+            artifact_bucket="$(python3 scripts/release_state.py show --kind static --env "${env}" --field artifactBucket)"
+            artifact_key="$(python3 scripts/release_state.py show --kind static --env "${env}" --field artifactKey)"
+            site_bucket="$(python3 scripts/release_state.py show --kind static --env "${env}" --field siteBucket)"
+            distribution_id="$(python3 scripts/release_state.py show --kind static --env "${env}" --field cloudFrontDistributionId)"
+
+            workdir="/tmp/static-${env}"
+            rm -rf "${workdir}"
+            mkdir -p "${workdir}"
+
+            aws s3 cp "s3://${artifact_bucket}/${artifact_key}" "${workdir}/site.zip"
+            unzip -q "${workdir}/site.zip" -d "${workdir}/site"
+
+            # Rewrite env.js at deploy time so this environment's APP_ENV,
+            # hostname, version, and commit match the target — the artifact
+            # itself stays immutable (same bytes in every env), but the
+            # per-env env.js surfaces the deploy context to the browser.
+            version="$(python3 scripts/release_state.py show --kind static --env "${env}" --field release.gitSha)"
+            release_version="$(python3 scripts/release_state.py show --kind static --env "${env}" --field release.version)"
+            public_base_url="$(python3 scripts/release_state.py show --kind static --env "${env}" --field publicBaseUrl)"
+            hostname_only="${public_base_url#https://}"
+            hostname_only="${hostname_only#http://}"
+            cat > "${workdir}/site/env.js" <<EOF
+          window.__ENV__ = {
+            APP_ENV: "${env}",
+            APP_VERSION: "${release_version}",
+            APP_HOSTNAME: "${hostname_only}",
+            APP_BASE_URL: "${public_base_url}",
+            APP_COMMIT_SHA: "${version}"
+          };
+          EOF
+
+            aws s3 sync "${workdir}/site" "s3://${site_bucket}" --delete
+
+            if [[ -n "${distribution_id}" ]]; then
+              aws cloudfront create-invalidation --distribution-id "${distribution_id}" --paths '/*' >/dev/null
+            fi
+          done

@@ -1,0 +1,90 @@
+name: Deploy ECS Service
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "deploy/ecs/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to deploy
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-ecs:
+    runs-on: ubuntu-latest
+    # Skip when AWS vars aren't seeded yet. On a fresh Classroom fork the
+    # `deploy/ecs/**` paths ship with the template, so the initial push
+    # matches the path filter. `setup_repo.py` only writes `AWS_REGION` +
+    # role ARNs during Lab 3. Without this guard, configure-aws-credentials
+    # fails with "Input required and not supplied: aws-region" and the
+    # student sees a red X before even opening Lab 0.
+    if: vars.AWS_REGION != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ECS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Determine target environments
+        id: targets
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "environments=${{ inputs.environment }}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          before="${{ github.event.before }}"
+          after="${{ github.sha }}"
+          if [[ -z "${before}" || "${before}" == "0000000000000000000000000000000000000000" ]]; then
+            before="$(git rev-parse "${after}^" 2>/dev/null || true)"
+          fi
+
+          if [[ -z "${before}" ]]; then
+            envs="$(find deploy/ecs -name task-definition.json | awk -F/ '{print $3}' | sort -u | paste -sd',' -)"
+          else
+            envs="$(git diff --name-only "${before}" "${after}" -- deploy/ecs | awk -F/ '/deploy\/ecs\/[^/]+\// {print $3}' | sort -u | paste -sd',' -)"
+          fi
+          echo "environments=${envs}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy changed environments
+        if: steps.targets.outputs.environments != ''
+        shell: bash
+        run: |
+          IFS=',' read -ra envs <<< "${{ steps.targets.outputs.environments }}"
+          for env in "${envs[@]}"; do
+            task_file="deploy/ecs/${env}/task-definition.json"
+            # Skip bootstrap state: task image digest is all-zero until Lab 7's promotion PR pins a real digest.
+            if grep -q '@sha256:0\{64\}' "${task_file}"; then
+              echo "::notice::${env}: task image is the all-zero bootstrap digest — no real release yet (first deploy lands in Lab 7). Skipping."
+              continue
+            fi
+            cluster="$(python3 scripts/release_state.py show --kind ecs-service --env "${env}" --field cluster)"
+            service="$(python3 scripts/release_state.py show --kind ecs-service --env "${env}" --field service)"
+            wait_for_stable="$(python3 scripts/release_state.py show --kind ecs-service --env "${env}" --field waitForSteadyState)"
+
+            task_arn="$(aws ecs register-task-definition --cli-input-json "file://${task_file}" --query 'taskDefinition.taskDefinitionArn' --output text)"
+            aws ecs update-service --cluster "${cluster}" --service "${service}" --task-definition "${task_arn}" --force-new-deployment >/dev/null
+
+            if [[ "${wait_for_stable}" == "True" || "${wait_for_stable}" == "true" ]]; then
+              aws ecs wait services-stable --cluster "${cluster}" --services "${service}"
+            fi
+          done

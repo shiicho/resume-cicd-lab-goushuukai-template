@@ -1,0 +1,361 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "GitHub Actions bootstrap with OIDC and scoped deploy roles for the hands-on CI/CD environment."
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: "Project slug used in resource names."
+  ResourceProjectName:
+    Type: String
+    Description: "Short project name used in AWS resource names."
+  ResourceIdentifier:
+    Type: String
+    Description: "Repo or workload identifier appended to AWS resource names."
+  GitHubOrg:
+    Type: String
+    Description: "GitHub owner or organization."
+  GitHubRepoName:
+    Type: String
+    Description: "GitHub repository name."
+  ExistingGitHubOidcProviderArn:
+    Type: String
+    Description: "Optional existing GitHub OIDC provider ARN. Leave empty to create one."
+    Default: ""
+  DailyCap:
+    Type: Number
+    Description: "Daily AWS cost cap in USD. Budget alerts fire at 80% and 100% of this value."
+    MinValue: 0.01
+  SafetyEmail:
+    Type: String
+    Description: "Email address that receives budget alert notifications. You must confirm the SNS subscription from your inbox."
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    ConstraintDescription: "Must be a valid email address."
+
+Conditions:
+  CreateGitHubOidcProvider: !Equals [!Ref ExistingGitHubOidcProviderArn, ""]
+
+Resources:
+  GitHubOidcProvider:
+    Condition: CreateGitHubOidcProvider
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: "https://token.actions.githubusercontent.com"
+      ClientIdList:
+        - "sts.amazonaws.com"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ResourceProjectName}-shared-iam-oidc-github-${ResourceIdentifier}"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: shared
+        - Key: ManagedBy
+          Value: cloudformation
+        - Key: Service
+          Value: bootstrap
+
+  ReleaseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ResourceProjectName}-shared-iam-gh-release-${ResourceIdentifier}"
+      Description: "GitHub Actions role for artifact upload and ECR image push."
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Principal:
+              Federated: !If
+                - CreateGitHubOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingGitHubOidcProviderArn
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: "sts.amazonaws.com"
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubOrg}/${GitHubRepoName}:ref:refs/heads/*"
+                  - !Sub "repo:${GitHubOrg}/${GitHubRepoName}:ref:refs/tags/*"
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-release-artifacts-and-ecr"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcrLogin
+                Effect: Allow
+                Action:
+                  - "ecr:GetAuthorizationToken"
+                Resource: "*"
+              - Sid: EcrPush
+                Effect: Allow
+                Action:
+                  - "ecr:BatchCheckLayerAvailability"
+                  - "ecr:BatchGetImage"
+                  - "ecr:CompleteLayerUpload"
+                  - "ecr:DescribeImages"
+                  - "ecr:DescribeRepositories"
+                  - "ecr:GetDownloadUrlForLayer"
+                  - "ecr:InitiateLayerUpload"
+                  - "ecr:ListImages"
+                  - "ecr:PutImage"
+                  - "ecr:UploadLayerPart"
+                Resource: !Sub "arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/${ResourceProjectName}-shared-ecr-web-${ResourceIdentifier}"
+              - Sid: ArtifactBucketList
+                Effect: Allow
+                Action:
+                  - "s3:GetBucketLocation"
+                  - "s3:ListBucket"
+                Resource: !Sub "arn:aws:s3:::${ResourceProjectName}-shared-s3-artifact-${ResourceIdentifier}-${AWS::AccountId}"
+              - Sid: ArtifactBucketObjects
+                Effect: Allow
+                Action:
+                  - "s3:AbortMultipartUpload"
+                  - "s3:DeleteObject"
+                  - "s3:GetObject"
+                  - "s3:ListBucketMultipartUploads"
+                  - "s3:ListMultipartUploadParts"
+                  - "s3:PutObject"
+                Resource: !Sub "arn:aws:s3:::${ResourceProjectName}-shared-s3-artifact-${ResourceIdentifier}-${AWS::AccountId}/*"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ResourceProjectName}-shared-iam-gh-release-${ResourceIdentifier}"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: shared
+        - Key: ManagedBy
+          Value: cloudformation
+        - Key: Service
+          Value: bootstrap
+
+  StaticDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ResourceProjectName}-shared-iam-gh-static-deploy-${ResourceIdentifier}"
+      Description: "GitHub Actions role for static site deployment."
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Principal:
+              Federated: !If
+                - CreateGitHubOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingGitHubOidcProviderArn
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: "sts.amazonaws.com"
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubOrg}/${GitHubRepoName}:ref:refs/heads/*"
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-static-deploy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadArtifactsBucket
+                Effect: Allow
+                Action:
+                  - "s3:GetBucketLocation"
+                  - "s3:ListBucket"
+                  - "s3:GetObject"
+                Resource:
+                  - !Sub "arn:aws:s3:::${ResourceProjectName}-shared-s3-artifact-${ResourceIdentifier}-${AWS::AccountId}"
+                  - !Sub "arn:aws:s3:::${ResourceProjectName}-shared-s3-artifact-${ResourceIdentifier}-${AWS::AccountId}/*"
+              - Sid: WriteStaticBuckets
+                Effect: Allow
+                Action:
+                  - "s3:AbortMultipartUpload"
+                  - "s3:DeleteObject"
+                  - "s3:GetBucketLocation"
+                  - "s3:GetObject"
+                  - "s3:ListBucket"
+                  - "s3:ListBucketMultipartUploads"
+                  - "s3:ListMultipartUploadParts"
+                  - "s3:PutObject"
+                Resource:
+                  - !Sub "arn:aws:s3:::${ResourceProjectName}-*-s3-site-${ResourceIdentifier}-${AWS::AccountId}"
+                  - !Sub "arn:aws:s3:::${ResourceProjectName}-*-s3-site-${ResourceIdentifier}-${AWS::AccountId}/*"
+              - Sid: InvalidateProjectDistributions
+                Effect: Allow
+                Action:
+                  - "cloudfront:CreateInvalidation"
+                  - "cloudfront:GetDistribution"
+                  - "cloudfront:GetDistributionConfig"
+                Resource: "arn:aws:cloudfront::*:distribution/*"
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/Project: !Ref ProjectName
+      Tags:
+        - Key: Name
+          Value: !Sub "${ResourceProjectName}-shared-iam-gh-static-deploy-${ResourceIdentifier}"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: shared
+        - Key: ManagedBy
+          Value: cloudformation
+        - Key: Service
+          Value: bootstrap
+
+  EcsDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ResourceProjectName}-shared-iam-gh-ecs-deploy-${ResourceIdentifier}"
+      Description: "GitHub Actions role for ECS task-definition registration and service rollout."
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "sts:AssumeRoleWithWebIdentity"
+            Principal:
+              Federated: !If
+                - CreateGitHubOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingGitHubOidcProviderArn
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: "sts.amazonaws.com"
+              StringLike:
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubOrg}/${GitHubRepoName}:ref:refs/heads/*"
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-ecs-deploy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcsDeploy
+                Effect: Allow
+                Action:
+                  - "ecs:DescribeClusters"
+                  - "ecs:DescribeServices"
+                  - "ecs:DescribeTaskDefinition"
+                  - "ecs:RegisterTaskDefinition"
+                  - "ecs:UpdateService"
+                  - "ecs:TagResource"
+                Resource: "*"
+              - Sid: PassTaskRoles
+                Effect: Allow
+                Action:
+                  - "iam:PassRole"
+                Resource:
+                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/${ResourceProjectName}-*-iam-ecs-task-*-${ResourceIdentifier}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ResourceProjectName}-shared-iam-gh-ecs-deploy-${ResourceIdentifier}"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: shared
+        - Key: ManagedBy
+          Value: cloudformation
+        - Key: Service
+          Value: bootstrap
+
+  BudgetAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ResourceProjectName}-shared-sns-budget-alerts-${ResourceIdentifier}"
+      DisplayName: !Sub "Budget alerts for ${ResourceIdentifier}"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ResourceProjectName}-shared-sns-budget-alerts-${ResourceIdentifier}"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: shared
+        - Key: ManagedBy
+          Value: cloudformation
+        - Key: Service
+          Value: safety
+
+  BudgetAlertTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref BudgetAlertTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Id: BudgetsPublishPolicy
+        Statement:
+          - Sid: AllowBudgetsPublish
+            Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: "SNS:Publish"
+            Resource: !Ref BudgetAlertTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+
+  BudgetAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref BudgetAlertTopic
+      Protocol: email
+      Endpoint: !Ref SafetyEmail
+
+  DailyCostBudget:
+    Type: AWS::Budgets::Budget
+    DependsOn: BudgetAlertTopicPolicy
+    Properties:
+      Budget:
+        BudgetName: !Sub "${ResourceIdentifier}-daily-cap"
+        BudgetType: COST
+        TimeUnit: DAILY
+        BudgetLimit:
+          Amount: !Ref DailyCap
+          Unit: USD
+        CostTypes:
+          IncludeTax: true
+          IncludeSubscription: true
+          UseBlended: false
+          IncludeRefund: false
+          IncludeCredit: false
+          IncludeUpfront: true
+          IncludeRecurring: true
+          IncludeOtherSubscription: true
+          IncludeSupport: true
+          IncludeDiscount: true
+          UseAmortized: false
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertTopic
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetAlertTopic
+
+Outputs:
+  GitHubOidcProviderArn:
+    Description: "ARN of the GitHub OIDC provider used by the roles."
+    Value: !If
+      - CreateGitHubOidcProvider
+      - !Ref GitHubOidcProvider
+      - !Ref ExistingGitHubOidcProviderArn
+  ReleaseRoleArn:
+    Description: "Role ARN used by release and artifact workflows."
+    Value: !GetAtt ReleaseRole.Arn
+  StaticDeployRoleArn:
+    Description: "Role ARN used by static site deployment workflows."
+    Value: !GetAtt StaticDeployRole.Arn
+  EcsDeployRoleArn:
+    Description: "Role ARN used by ECS deployment workflows."
+    Value: !GetAtt EcsDeployRole.Arn
+  BudgetName:
+    Description: "Name of the daily-cap AWS Budget."
+    Value: !Ref DailyCostBudget
+  BudgetAlertTopicArn:
+    Description: "SNS topic ARN where budget alerts publish."
+    Value: !Ref BudgetAlertTopic

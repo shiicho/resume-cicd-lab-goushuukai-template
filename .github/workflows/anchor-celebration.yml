@@ -1,0 +1,177 @@
+name: Anchor Celebration
+
+# Lab 7 anchor moment — "FIRST UNIT SHIPPED".
+# Fires when Deploy Static Site completes successfully on main. Finds the
+# promotion PR that produced this deploy, posts a bot comment with a pipeline
+# ASCII diagram + live CloudFront URL, and creates a v-lab-7-shipped-<version>
+# GitHub Release the first time the student ships.
+#
+# The ECS deploy runs in parallel; we don't block on it. If ECS fails the
+# Deploy ECS Service run surfaces the failure on its own — the celebration
+# is scoped to the S3+CloudFront path ending in a visitable URL.
+
+on:
+  workflow_run:
+    workflows: ["Deploy Static Site"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  celebrate:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+
+      - name: Find the promotion PR
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = context.payload.workflow_run.head_sha;
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'closed',
+              per_page: 30,
+              sort: 'updated',
+              direction: 'desc',
+            });
+            const pr = prs.find(p =>
+              p.merge_commit_sha === sha
+              && /^chore\((development|staging|production)\):\s*promote/i.test(p.title)
+            );
+            if (!pr) {
+              core.info(`No matching promotion PR for SHA ${sha}; skipping celebration.`);
+              return;
+            }
+            const envMatch = pr.title.match(/chore\((\w+)\)/);
+            const versionMatch = pr.title.match(/web v(\d+\.\d+\.\d+)/);
+            core.setOutput('number', pr.number);
+            core.setOutput('title', pr.title);
+            core.setOutput('env', envMatch ? envMatch[1] : '');
+            core.setOutput('version', versionMatch ? versionMatch[1] : '');
+
+      - name: Read per-env deploy manifest
+        if: steps.pr.outputs.number
+        id: manifest
+        shell: bash
+        run: |
+          env_name="${{ steps.pr.outputs.env }}"
+          site_json="deploy/static/${env_name}/site.json"
+          if [[ ! -f "${site_json}" ]]; then
+            echo "::notice::Manifest ${site_json} not found; skipping celebration."
+            echo "cf_url=" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          cf_url="$(jq -r .publicBaseUrl "${site_json}")"
+          echo "cf_url=${cf_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check first-ship moment
+        if: steps.pr.outputs.number && steps.manifest.outputs.cf_url
+        id: first_ship
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: releases } = await github.rest.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const first = !releases.some(r =>
+              typeof r.tag_name === 'string' && r.tag_name.startsWith('v-lab-7-shipped-')
+            );
+            core.setOutput('first', first ? 'true' : 'false');
+
+      - name: Post FIRST UNIT SHIPPED comment
+        if: steps.pr.outputs.number && steps.manifest.outputs.cf_url
+        uses: actions/github-script@v7
+        env:
+          VERSION: ${{ steps.pr.outputs.version }}
+          ENV_NAME: ${{ steps.pr.outputs.env }}
+          CF_URL: ${{ steps.manifest.outputs.cf_url }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          FULL_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            const sha = process.env.FULL_SHA.substring(0, 12);
+            const env = process.env.ENV_NAME;
+            const version = process.env.VERSION || '(unknown)';
+            const cfUrl = process.env.CF_URL;
+            const body = [
+              '```',
+              '     ================================================',
+              `        FIRST UNIT SHIPPED  —  web-v${version} · ${sha}`,
+              '     ================================================',
+              '',
+              '             ┌───┐     ┌────┐',
+              `      ────▶ │S3 │───▶│ CF  │───▶ ${cfUrl}`,
+              '             └───┘     └────┘',
+              '             ┌───┐     ┌────┐',
+              '      ────▶ │ECR│───▶│ ECS │───▶ ALB URL (see CFN stack outputs)',
+              '             └───┘     └────┘',
+              '',
+              '     Same artifact. Two runtimes. You\'ll feel',
+              '     the difference between them for the rest',
+              '     of your career.',
+              '',
+              `     Env: ${env} · Next: Lab 8 → docs/en/lab-08-self-proof-banner.md`,
+              '```',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt(process.env.PR_NUMBER, 10),
+              body,
+            });
+
+      - name: Create v-lab-7-shipped release (first ship only)
+        if: steps.pr.outputs.number && steps.manifest.outputs.cf_url && steps.first_ship.outputs.first == 'true'
+        uses: actions/github-script@v7
+        env:
+          VERSION: ${{ steps.pr.outputs.version }}
+          ENV_NAME: ${{ steps.pr.outputs.env }}
+          CF_URL: ${{ steps.manifest.outputs.cf_url }}
+          FULL_SHA: ${{ github.event.workflow_run.head_sha }}
+        with:
+          script: |
+            const version = process.env.VERSION || 'unknown';
+            const tag = `v-lab-7-shipped-${version}`;
+            const name = `First unit shipped · ${process.env.ENV_NAME} · web-v${version}`;
+            const body = [
+              'Your first release reached a live URL on a real AWS environment.',
+              '',
+              `Deployed to: \`${process.env.CF_URL}\``,
+              '',
+              'Release artifacts (immutable):',
+              '- S3 zip (CloudFront origin)',
+              '- ECR image (digest-pinned)',
+              '',
+              `Sourced from commit \`${process.env.FULL_SHA.substring(0, 12)}\`.`,
+              '',
+              'This release stays on your GitHub profile as proof of the CI/CD lifecycle.',
+            ].join('\n');
+            try {
+              await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                target_commitish: process.env.FULL_SHA,
+                name,
+                body,
+              });
+              core.notice(`Created release ${tag}`);
+            } catch (err) {
+              if (err.status === 422) {
+                core.info(`Release ${tag} already exists — skipping (idempotent).`);
+              } else {
+                throw err;
+              }
+            }

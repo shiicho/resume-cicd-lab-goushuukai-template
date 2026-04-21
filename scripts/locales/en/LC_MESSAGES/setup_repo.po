@@ -1,0 +1,155 @@
+# English source catalog for resume-cicd-lab wizards.
+# This file is the source-of-truth — other locales translate from here.
+# Not compiled (en uses gettext's NullTranslations / identity fallback).
+msgid ""
+msgstr ""
+"Project-Id-Version: setup_repo 0.1\n"
+"POT-Creation-Date: 2026-04-22 12:00+0000\n"
+"PO-Revision-Date: 2026-04-22 12:00+0000\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+# ----------------------------------------------------------------------
+# First-run locale picker
+# ----------------------------------------------------------------------
+
+msgid "UI language"
+msgstr "UI language"
+
+msgid "Auto (detected: {locale})"
+msgstr "Auto (detected: {locale})"
+
+msgid "Commands and flags stay English in every locale."
+msgstr "Commands and flags stay English in every locale."
+
+msgid "Change anytime: ./scripts/setup_repo.py configure --locale <lang>"
+msgstr "Change anytime: ./scripts/setup_repo.py configure --locale <lang>"
+
+# ----------------------------------------------------------------------
+# validate-tools
+# ----------------------------------------------------------------------
+
+msgid "Tool status"
+msgstr "Tool status"
+
+msgid "Tool"
+msgstr "Tool"
+
+msgid "Available"
+msgstr "Available"
+
+msgid "Version"
+msgstr "Version"
+
+msgid "Authenticated"
+msgstr "Authenticated"
+
+msgid "Toolchain ready"
+msgstr "Toolchain ready"
+
+msgid "Next: Lab {n} — {title}"
+msgstr "Next: Lab {n} — {title}"
+
+msgid "First command:"
+msgstr "First command:"
+
+msgid "{tool} not on your PATH"
+msgstr "{tool} not on your PATH"
+
+msgid "{tool} {v} is below the minimum {floor}"
+msgstr "{tool} {v} is below the minimum {floor}"
+
+# ----------------------------------------------------------------------
+# apply flow
+# ----------------------------------------------------------------------
+
+msgid "Grab a coffee — we'll tell you when it's done."
+msgstr "Grab a coffee — we'll tell you when it's done."
+
+msgid "Estimated wait"
+msgstr "Estimated wait"
+
+msgid "Your first AWS infrastructure is alive"
+msgstr "Your first AWS infrastructure is alive"
+
+msgid "Running stacks ({n}):"
+msgstr "Running stacks ({n}):"
+
+msgid "Daily cost: ${x}"
+msgstr "Daily cost: ${x}"
+
+# ----------------------------------------------------------------------
+# typed-scope destroy
+# ----------------------------------------------------------------------
+
+msgid "This is destructive. Type the exact scope below to confirm:"
+msgstr "This is destructive. Type the exact scope below to confirm:"
+
+msgid "Scope confirmed — proceeding."
+msgstr "Scope confirmed — proceeding."
+
+# ----------------------------------------------------------------------
+# destroy success
+# ----------------------------------------------------------------------
+
+msgid "Environment peacefully gone"
+msgstr "Environment peacefully gone"
+
+msgid "Removed: {n} stacks · {o} S3 objects · {i} ECR images"
+msgstr "Removed: {n} stacks · {o} S3 objects · {i} ECR images"
+
+msgid "Cost stopped: ${x}/day"
+msgstr "Cost stopped: ${x}/day"
+
+msgid "To come back later:"
+msgstr "To come back later:"
+
+# ----------------------------------------------------------------------
+# claim + promotion
+# ----------------------------------------------------------------------
+
+msgid "Lab {n} claim PR opened"
+msgstr "Lab {n} claim PR opened"
+
+msgid "Auto-merge when CI is green:"
+msgstr "Auto-merge when CI is green:"
+
+msgid "{env} promotion ready"
+msgstr "{env} promotion ready"
+
+# ----------------------------------------------------------------------
+# common errors
+# ----------------------------------------------------------------------
+
+msgid "Not inside a git repository."
+msgstr "Not inside a git repository."
+
+# ----------------------------------------------------------------------
+# Questionary constants (monkey-patched in wizard.i18n)
+# ----------------------------------------------------------------------
+
+msgid "Yes"
+msgstr "Yes"
+
+msgid "No"
+msgstr "No"
+
+msgid "(Y/n)"
+msgstr "(Y/n)"
+
+msgid "(y/N)"
+msgstr "(y/N)"
+
+msgid "Cancelled by user."
+msgstr "Cancelled by user."
+
+msgid "Invalid input"
+msgstr "Invalid input"
+
+msgid "(Use arrow keys)"
+msgstr "(Use arrow keys)"
+
+msgid "(Use arrow keys + space to select)"
+msgstr "(Use arrow keys + space to select)"

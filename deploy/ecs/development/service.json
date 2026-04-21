@@ -1,0 +1,7 @@
+{
+  "environment": "development",
+  "cluster": "resume-dev-ecs-cluster-cicd-lab",
+  "service": "resume-dev-ecs-service-cicd-lab",
+  "waitForSteadyState": true,
+  "cloudFormationStack": "resume-cicd-lab-dev-ecs-app"
+}

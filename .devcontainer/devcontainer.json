@@ -1,0 +1,35 @@
+{
+  "name": "resume-cicd-lab",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu22.04",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11",
+      "installTools": true
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/aws-cli:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "postCreateCommand": "sudo apt-get update -y && sudo apt-get install -y --no-install-recommends jq && pip install --user -r scripts/requirements.txt",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "davidanson.vscode-markdownlint",
+        "tamasfe.even-better-toml"
+      ]
+    }
+  },
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": {
+      "label": "Vite dev server (app/)",
+      "onAutoForward": "silent"
+    }
+  },
+  "remoteEnv": {
+    "PATH": "${containerEnv:PATH}:${containerEnv:HOME}/.local/bin"
+  }
+}

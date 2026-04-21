@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Static site hosting with a private S3 bucket and CloudFront."
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: "Project slug used in resource names."
+  ResourceProjectName:
+    Type: String
+    Description: "Short project name used in AWS resource names."
+  ResourceIdentifier:
+    Type: String
+    Description: "Repo or workload identifier appended to AWS resource names."
+  Environment:
+    Type: String
+    Description: "Environment name."
+    AllowedValues:
+      - development
+      - staging
+      - production
+  EnvironmentCode:
+    Type: String
+    Description: "Abbreviated environment code used in AWS resource names."
+    AllowedValues:
+      - dev
+      - stg
+      - prd
+  PriceClass:
+    Type: String
+    Description: "CloudFront price class."
+    AllowedValues:
+      - PriceClass_100
+      - PriceClass_200
+      - PriceClass_All
+    Default: PriceClass_200
+  DefaultRootObject:
+    Type: String
+    Description: "Default document served by CloudFront."
+    Default: index.html
+
+Resources:
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${ResourceProjectName}-${EnvironmentCode}-s3-site-${ResourceIdentifier}-${AWS::AccountId}"
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Sub "${ResourceProjectName}-${EnvironmentCode}-s3-site-${ResourceIdentifier}-${AWS::AccountId}"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: cloudformation
+        - Key: Service
+          Value: static-site
+
+  SiteOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${ResourceProjectName}-${EnvironmentCode}-cf-oac-${ResourceIdentifier}"
+        Description: "CloudFront OAC for the private site bucket."
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  SiteDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: !Ref DefaultRootObject
+        PriceClass: !Ref PriceClass
+        HttpVersion: http2
+        Origins:
+          - Id: site-bucket
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SiteOriginAccessControl.Id
+            S3OriginConfig: {}
+        DefaultCacheBehavior:
+          TargetOriginId: site-bucket
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+      Tags:
+        - Key: Name
+          Value: !Sub "${ResourceProjectName}-${EnvironmentCode}-cf-site-${ResourceIdentifier}"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: cloudformation
+        - Key: Service
+          Value: static-site
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontRead
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: "s3:GetObject"
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}"
+
+Outputs:
+  SiteBucketName:
+    Description: "Private S3 bucket that stores the published site."
+    Value: !Ref SiteBucket
+  DistributionId:
+    Description: "CloudFront distribution ID."
+    Value: !Ref SiteDistribution
+  DistributionDomainName:
+    Description: "CloudFront distribution domain name."
+    Value: !GetAtt SiteDistribution.DomainName
+  SiteUrl:
+    Description: "Public URL for the static site."
+    Value: !Sub "https://${SiteDistribution.DomainName}"

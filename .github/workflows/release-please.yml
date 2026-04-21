@@ -1,0 +1,77 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write  # required for the dispatch-* jobs below
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.release-please.outputs.releases_created }}
+      prs_created: ${{ steps.release-please.outputs.prs_created }}
+      tag_name: ${{ steps.release-please.outputs['app--tag_name'] }}
+      pr_head_branch: ${{ fromJSON(steps.release-please.outputs.pr || '{}').headBranchName }}
+    steps:
+      - name: Run release please
+        id: release-please
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Chain #1: when the release PR is opened/updated, explicitly dispatch CI
+  # on its branch. Without this, branch protection's required `summary` check
+  # never appears — GitHub's bot-loop rule blocks PRs opened by GITHUB_TOKEN
+  # from triggering downstream `pull_request`-event workflows. workflow_dispatch
+  # from the same token IS allowed, and the resulting check-run attaches to
+  # the PR's commit SHA, satisfying branch protection once students also do a
+  # close+reopen (a one-time step). Long-term fix would be a GitHub App token
+  # for release-please, but that adds setup friction not worth it for a lab.
+  dispatch-ci-on-release-pr:
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true' && needs.release-please.outputs.pr_head_branch != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch Validate on the release PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          branch="${{ needs.release-please.outputs.pr_head_branch }}"
+          echo "Release Please opened/updated PR branch ${branch}; dispatching ci.yml"
+          gh workflow run ci.yml \
+            --repo "${GH_REPO}" \
+            --ref "${branch}"
+
+  # Chain #2: when a new tag is cut (release PR merged), dispatch the release
+  # assets build. Same bot-loop safety-rule applies: a tag push from GITHUB_TOKEN
+  # can't fire `push: tags` workflows directly, but workflow_dispatch from that
+  # token is explicitly permitted.
+  dispatch-release-assets:
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch Build Release Assets on the new tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="${{ needs.release-please.outputs.tag_name }}"
+          version="${tag#web-v}"
+          echo "Release Please created tag ${tag}; dispatching release-assets.yml with version=${version}"
+          # --repo is required because this job has no actions/checkout step, so
+          # gh can't infer the target repo from a git remote — without it gh
+          # shells out to `git` and fails with "not a git repository".
+          gh workflow run release-assets.yml \
+            --repo "${GH_REPO}" \
+            --ref "${tag}" \
+            -f version="${version}"
